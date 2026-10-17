@@ -1,17 +1,25 @@
 import os
+import streamlit as st
 from groq import Groq
 from src.retriever import recherche_hybride
 import chromadb
 from sentence_transformers import SentenceTransformer
 
-# 1. Initialisation des modèles et de la base de données
-# (On les charge une seule fois au démarrage pour la performance)
+# 1. Récupération sécurisée de la clé API
+# On cherche d'abord dans les secrets Streamlit (Cloud), puis dans l'environnement (Local)
+api_key = st.secrets.get("GROQ_API_KEY") or os.environ.get("GROQ_API_KEY")
+
+if not api_key:
+    raise ValueError("Erreur : La clé GROQ_API_KEY est introuvable. Vérifiez les Secrets sur Streamlit Cloud.")
+
+client_llm = Groq(api_key=api_key)
+
+# 2. Initialisation des modèles et de la base de données
 modele_embedding = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
 client_chroma = chromadb.PersistentClient(path="./chroma_db")
-collection = client_chroma.get_or_create_collection(name="lois_maroc")
 
-# 2. Connexion à Groq (utilise le Secret Streamlit ou une variable d'environnement)
-client_llm = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+# On récupère la collection. Si elle n'existe pas, get_or_create la crée (vide)
+collection = client_chroma.get_or_create_collection(name="lois_maroc")
 
 def construire_prompt(question, chunks_recuperes):
     contexte = "\n\n".join([
@@ -28,15 +36,17 @@ QUESTION: {question}
 RÉPONSE:"""
 
 def repondre(question):
-    # On récupère les textes (attention : on doit passer 'chunks', on va le charger depuis ChromaDB)
-    # Pour faire simple, on récupère tous les documents de ChromaDB
+    # On récupère tous les textes stockés dans la base ChromaDB
     resultats_db = collection.get()
     chunks = resultats_db['documents']
     
     if not chunks:
-        return "Erreur : La base de données est vide. Le PDF n'a pas été traité."
+        return "Erreur : La base de données est vide. Le fichier PDF n'a pas encore été traité. Veuillez patienter ou vérifier le fichier data/raw/."
 
+    # Recherche des 5 passages les plus pertinents
     chunks_recuperes = recherche_hybride(question, chunks, modele_embedding, collection, k=5)
+    
+    # Construction du prompt et appel à l'IA
     prompt = construire_prompt(question, chunks_recuperes)
     
     reponse = client_llm.chat.completions.create(
