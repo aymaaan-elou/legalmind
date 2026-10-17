@@ -5,28 +5,15 @@ from src.retriever import recherche_hybride
 import chromadb
 from sentence_transformers import SentenceTransformer
 
-# 1. Récupération sécurisée de la clé API
-api_key = None
-try:
-    # On cherche d'abord dans les secrets Streamlit (Cloud)
-    if "GROQ_API_KEY" in st.secrets:
-        api_key = st.secrets["GROQ_API_KEY"]
-except Exception:
-    pass
+# --- INITIALISATION DE LA CLÉ API ---
+# On lit la clé directement dans les secrets de Streamlit.
+# C'est la méthode la plus fiable sur Streamlit Cloud.
+api_key = st.secrets["GROQ_API_KEY"]
 
-# Si non trouvé, on cherche dans les variables d'environnement (Local)
-if not api_key:
-    api_key = os.environ.get("GROQ_API_KEY")
-
-# Si la clé est introuvable, on affiche une erreur propre dans l'interface
-if not api_key:
-    st.error("Erreur critique : La clé 'GROQ_API_KEY' est introuvable. Veuillez l'ajouter dans les Secrets de Streamlit Cloud.")
-    st.stop() # Stoppe l'application proprement ici
-
-# Initialisation du client Groq
+# Initialisation du client Groq avec cette clé.
 client_llm = Groq(api_key=api_key)
 
-# 2. Initialisation des modèles (mis en cache pour ne pas ralentir l'app)
+# --- INITIALISATION DES MODÈLES ---
 @st.cache_resource
 def charger_modeles():
     modele_embedding = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
@@ -51,17 +38,13 @@ QUESTION: {question}
 RÉPONSE:"""
 
 def repondre(question):
-    # Récupération des textes depuis ChromaDB
     resultats_db = collection.get()
     chunks = resultats_db['documents']
     
     if not chunks:
-        return "Erreur : La base de données est vide. Le fichier PDF n'a pas encore été traité. Veuillez patienter quelques instants et rafraîchir la page."
+        return "Erreur : La base de données est vide. Le fichier PDF n'a pas encore été traité. Veuillez patienter."
 
-    # Recherche des passages pertinents
     chunks_recuperes = recherche_hybride(question, chunks, modele_embedding, collection, k=5)
-    
-    # Construction du prompt et appel à l'IA
     prompt = construire_prompt(question, chunks_recuperes)
     
     reponse = client_llm.chat.completions.create(
